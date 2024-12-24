@@ -1,0 +1,11 @@
+etc
+Include
+Lib
+Scripts
+share
+.env
+pyvenv.cfg
+*.pyc
+mlruns
+dockerize-models.txt
+dataset
