@@ -1,12 +1,12 @@
 import streamlit as st
 import requests
+from utils.encoder import get_class
 import os
-from page.utils.encoder import get_class
 
 st.set_page_config('Age Detection',layout='centered')
 st.title('Face Age Detector')
 
-api_url = os.environ['API_URL']
+api_predict_url = os.environ['API_PREDICT_URL']
 class_list = get_class()
 
 uploaded = None
@@ -59,7 +59,7 @@ if (uploaded and not camera) or (not uploaded and camera):
             'file':("camera_image.jpeg", camera, "image/jpeg")
         }
     try:
-        response = requests.post(api_url,files=files)
+        response = requests.post(api_predict_url,files=files)
 
         if response.status_code == 200:
             probability = response.json()['prediction']

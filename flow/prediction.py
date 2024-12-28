@@ -1,36 +1,10 @@
 import PIL.Image
-from prefect import flow, task
-import torch.nn.functional as F
 from torchvision.transforms import v2
-import mlflow
-import mlflow.pytorch
-import mlflow.sklearn
-import os
 import torch
 import PIL
-from sklearn.linear_model import LogisticRegression
+import requests
+import os
 
-
-@task
-def load_model():
-    run_id = os.environ['RUN_ID']
-
-    features_uri = f"runs:/{run_id}/age_detector_features"
-    features_extractor = mlflow.pytorch.load_model(features_uri)
-
-    classifier_uri = f"runs:/{run_id}/age_detector_classifier"
-    age_classifier = mlflow.pytorch.load_model(classifier_uri)
-    
-    return features_extractor, age_classifier
-
-@task
-def load_classifier() -> LogisticRegression:
-    run_id = os.environ['RUN_ID']
-    clf_uri = f"runs:/{run_id}/face_detector"
-    clf = mlflow.sklearn.load_model(clf_uri)
-    return clf
-
-@task
 def get_transform() -> v2.Compose:
     transform = v2.Compose([
         v2.ToImage(),
@@ -40,50 +14,76 @@ def get_transform() -> v2.Compose:
     ])
     return transform
 
-@task
-def extracting_features(upload, transform:v2.Compose,
-                        features_extractor) -> torch.Tensor:
-    features_extractor.eval()
+def extracting_features(upload, transform:v2.Compose) -> torch.Tensor:
+    model_api_url = os.environ['API_MODEL_URL']
+    url = f'{model_api_url}/features'
     image = PIL.Image.open(upload).convert('RGB')
     image_tensor:torch.Tensor = transform(image).unsqueeze(0)
-    with torch.no_grad():
-        features:torch.Tensor = features_extractor(image_tensor).squeeze((2,3))
-    return features
+    data = {'inputs':image_tensor.tolist()}
+    headers = {'Content-Type':'application/json'}
+    try:
+        response = requests.post(url=url,
+                                 json=data,
+                                 headers=headers)
+        if response.status_code == 200:
+            preds = response.json()['predictions']
+            features = torch.tensor(preds,dtype=torch.float32)
+            features = features.squeeze((2,3))
+            return features
+        else:
+            raise Exception(response.json()['error'])
+    except Exception as e:
+        return str(e)
 
-@task
-def get_score(clf:LogisticRegression,
-            features:torch.Tensor) -> float:
-    features_numpy = features.cpu().numpy()
-    probs = clf.predict_proba(features_numpy)[:,1].item()
+def get_score(features:torch.Tensor) -> float:
+    model_api_url = os.environ['API_MODEL_URL']
+    url = f'{model_api_url}/face_detection'
+    data = {'inputs':features.tolist()}
+    headers = {'Content-Type':'application/json'}
+    try:
+        response = requests.post(url=url,
+                                 json=data,
+                                 headers=headers)
+        if response.status_code == 200:
+            preds = response.json()['predictions']
+            return preds
+        else:
+            raise Exception(response.json()['error'])
+    except Exception as e:
+        return str(e)
 
-    return probs
-
-@task
-def model_predict(age_classifier, 
-                  score:float,
+def model_predict(score:float,
                   features:torch.Tensor, 
                   threshold:float) -> list | None:
-    age_classifier.eval()
-    if score >= threshold:
-        with torch.no_grad():
-            pred = age_classifier(features)
-            probability = F.softmax(pred,dim=1)
-            probability = torch.round(probability,decimals=4)
-        return probability.squeeze(0).tolist()
-    else:
+    model_api_url = os.environ['API_MODEL_URL']
+    url = f'{model_api_url}/classify_age'
+    data = {'inputs':features.tolist()}
+    headers = {'Content-Type':'application/json'}
+    if score < threshold:
         return None
+    try:
+        response = requests.post(url=url,
+                                 json=data,
+                                 headers=headers)
+        if response.status_code == 200:
+            preds = response.json()['predictions']
+            return preds
+        else:
+            raise Exception(response.json()['error'])
+    except Exception as e:
+        return str(e)
 
-@flow
 def predict(upload,
             threshold:float=0.5) -> list | None:
-    transform = get_transform()
-    features_extractor, age_classifier = load_model()
-    clf = load_classifier()
+    try:
+        transform = get_transform()
 
-    features = extracting_features(upload,transform,features_extractor)
-    score = get_score(clf,features)
-    
-    return model_predict(age_classifier,score,features,threshold)
+        features = extracting_features(upload,transform)
+        score = get_score(features)
+        
+        return model_predict(score,features,threshold)
+    except Exception as e:
+        return str(e)
         
 
 

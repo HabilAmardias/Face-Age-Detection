@@ -6,6 +6,5 @@ share
 .env
 pyvenv.cfg
 *.pyc
-mlruns
-dockerize-models.txt
+Dockerfile
 dataset
